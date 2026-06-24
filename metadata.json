@@ -1,0 +1,6 @@
+{
+  "name": "Resume Customizer",
+  "description": "Tailor your professional resume to any job description in seconds. Automatically rewrites your summary and bullets to align with the role without fabricating any details.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
