@@ -9,8 +9,8 @@ import { db } from "./server/db.ts";
 dotenv.config();
 
 // Ensure Gemini API key is available
-if (!process.env.GEMINI_API_KEY) {
-  console.warn("WARNING: GEMINI_API_KEY environment variable is missing.");
+if (!process.env.GEMINI_API_KEY_RC) {
+  console.warn("WARNING: GEMINI_API_KEY_RC environment variable is missing.");
 }
 
 const app = express();
@@ -214,7 +214,7 @@ app.get("/api/opportunities", async (req, res) => {
 
 // Initialize the shared server-side Google GenAI client
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  apiKey: process.env.GEMINI_API_KEY_RC,
   httpOptions: {
     headers: {
       "User-Agent": "aistudio-build",
@@ -298,9 +298,9 @@ app.post("/api/tailor", async (req, res) => {
       return res.status(400).json({ error: "Original resume content is required." });
     }
 
-    if (!process.env.GEMINI_API_KEY) {
+    if (!process.env.GEMINI_API_KEY_RC) {
       return res.status(500).json({
-        error: "Gemini API key is not configured in environment. Please add GEMINI_API_KEY in Settings > Secrets."
+        error: "Gemini API key is not configured in environment. Please add GEMINI_API_KEY_RC in Settings > Secrets."
       });
     }
 
