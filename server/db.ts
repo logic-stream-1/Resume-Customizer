@@ -1,9 +1,10 @@
 import fs from "fs";
 import path from "path";
+import ws from "ws";
 import { createClient } from "@supabase/supabase-js";
 import { User, UserConfig, HistoricalRun, Opportunity, BulletItem, KeywordItem } from "../src/types.ts";
 
-const STORE_PATH = path.join(process.cwd(), "server_db_store.json");
+const STORE_PATH = path.join("/tmp", "server_db_store.json");
 
 interface DBStore {
   users: Record<string, User & { passwordHash: string }>;
@@ -26,7 +27,7 @@ function loadLocalDB(): DBStore {
       return JSON.parse(data);
     }
   } catch (error) {
-    console.error("[DB Store] Failed to read store file:", error);
+    console.log("[DB Store] Read store status:", error);
   }
   return initialStore;
 }
@@ -35,7 +36,7 @@ function saveLocalDB(store: DBStore) {
   try {
     fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), "utf-8");
   } catch (error) {
-    console.error("[DB Store] Failed to write store file:", error);
+    console.log("[DB Store] Write store status:", error);
   }
 }
 
@@ -47,23 +48,35 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const supabaseSchema = process.env.SUPABASE_SCHEMA || "resume_custom";
 
+const isValidKey = (val: string | undefined) => {
+  if (!val) return false;
+  const lower = val.toLowerCase().trim();
+  return lower !== "" && 
+         lower !== "undefined" && 
+         lower !== "null" && 
+         !lower.includes("your_") && 
+         !lower.includes("my_") && 
+         !lower.includes("placeholder");
+};
+
 export let supabase: any = null;
 export let isUsingLocalFallback = true;
 
-if (supabaseUrl && supabaseKey) {
+if (isValidKey(supabaseUrl) && isValidKey(supabaseKey)) {
   try {
-    supabase = createClient(supabaseUrl, supabaseKey, {
+    supabase = createClient(supabaseUrl!, supabaseKey!, {
       db: { schema: supabaseSchema },
-      auth: { persistSession: false }
+      auth: { persistSession: false },
+      realtime: { transport: ws as any }
     });
     isUsingLocalFallback = false;
     console.log(`[DB Service] Initialized Supabase on schema: ${supabaseSchema}`);
   } catch (err) {
-    console.error("[DB Service] Supabase load error:", err);
+    console.log("[DB Service] Supabase load status:", err);
     isUsingLocalFallback = true;
   }
 } else {
-  console.warn("[DB Service] Missing keys. Running in offline file fallback mode.");
+  console.log("[DB Service] Missing or invalid Supabase keys. Running in offline file fallback mode.");
   isUsingLocalFallback = true;
 }
 
@@ -288,7 +301,7 @@ KEY ACHIEVEMENTS:
         });
       }
     } catch (e) {
-      console.error("[Supabase Seeding Error] Falling back to local storage:", e);
+      console.log("[Supabase Seeding] Falling back to local storage:", e);
     }
   }
 
@@ -317,7 +330,8 @@ export const db = {
           if (data) return mapDbUser(data);
           return null;
         } catch (e) {
-          console.error("[Supabase db.users.findByEmail Error] Falling back:", e);
+          console.log("[Supabase db.users.findByEmail] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
@@ -379,7 +393,8 @@ export const db = {
 
           return { user: { id, email: normEmail, fullName, createdAt }, config: newConfig };
         } catch (e) {
-          console.error("[Supabase db.users.create Error] Falling back:", e);
+          console.log("[Supabase db.users.create] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
@@ -467,7 +482,8 @@ export const db = {
 
           return { user: { id, email: normEmail, fullName, createdAt }, config: newConfig };
         } catch (e) {
-          console.error("[Supabase db.users.findOrCreateOAuth Error] Falling back:", e);
+          console.log("[Supabase db.users.findOrCreateOAuth] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
@@ -532,7 +548,8 @@ export const db = {
           }
           return false;
         } catch (e) {
-          console.error("[Supabase db.users.resetPassword Error] Falling back:", e);
+          console.log("[Supabase db.users.resetPassword] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
@@ -556,7 +573,8 @@ export const db = {
           if (delErr) throw delErr;
           return true;
         } catch (e) {
-          console.error("[Supabase db.users.deleteAccount Error] Falling back:", e);
+          console.log("[Supabase db.users.deleteAccount] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
@@ -586,7 +604,8 @@ export const db = {
           if (error) throw error;
           if (data) return mapDbConfig(data);
         } catch (e) {
-          console.error("[Supabase db.configs.findByUserId Error] Falling back:", e);
+          console.log("[Supabase db.configs.findByUserId] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
@@ -632,7 +651,8 @@ export const db = {
             return mapDbConfig(data);
           }
         } catch (e) {
-          console.error("[Supabase db.configs.update Error] Falling back:", e);
+          console.log("[Supabase db.configs.update] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
@@ -661,14 +681,37 @@ export const db = {
             .order("created_at", { ascending: false });
 
           if (error) throw error;
-          if (data) return data.map(mapDbRun);
+          if (data && data.length > 0) {
+            return data.map(mapDbRun);
+          } else if (data && data.length === 0) {
+            // Pre-seed automatically to avoid blank slate
+            const { data: userRow } = await supabase.from("users").select("full_name").eq("id", userId).maybeSingle();
+            const fullName = userRow ? userRow.full_name : "User";
+            const { data: configRow } = await supabase.from("user_configs").select("active_region").eq("user_id", userId).maybeSingle();
+            const region = configRow ? configRow.active_region : "India";
+            console.log(`[Seeder] No runs found in Supabase for user ${userId}. Pre-seeding default...`);
+            const seeded = await seedDefaultRunForUser(userId, region as "India" | "Global", fullName);
+            return [seeded.run];
+          }
         } catch (e) {
-          console.error("[Supabase db.runs.findByUserId Error] Falling back:", e);
+          console.log("[Supabase db.runs.findByUserId] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
       const store = loadLocalDB();
-      return store.runs[userId] || [];
+      const userRuns = store.runs[userId] || [];
+      if (userRuns.length === 0) {
+        // Pre-seed automatically in local store to avoid blank slate
+        const user = store.users[userId];
+        const fullName = user ? user.fullName : "User";
+        const config = store.configs[userId];
+        const region = config ? config.activeRegion : "India";
+        console.log(`[Seeder] No local runs found for user ${userId}. Pre-seeding default...`);
+        const seeded = await seedDefaultRunForUser(userId, region as "India" | "Global", fullName);
+        return [seeded.run];
+      }
+      return userRuns;
     },
 
     create: async (userId: string, run: Omit<HistoricalRun, "id" | "userId" | "createdAt">) => {
@@ -699,7 +742,8 @@ export const db = {
 
           if (error) throw error;
         } catch (e) {
-          console.error("[Supabase db.runs.create Error] Falling back:", e);
+          console.log("[Supabase db.runs.create] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
@@ -733,10 +777,21 @@ export const db = {
           if (configErr) throw configErr;
 
           if (oppsData) {
-            const opps = oppsData.map(mapDbOpportunity);
-            if (!configData) return opps;
+            let opps = oppsData.map(mapDbOpportunity);
 
-            const config = mapDbConfig(configData);
+            if (opps.length === 0) {
+              // Pre-seed automatically if empty to avoid blank slate
+              const { data: userRow } = await supabase.from("users").select("full_name").eq("id", userId).maybeSingle();
+              const fullName = userRow ? userRow.full_name : "User";
+              const region = configData ? configData.active_region : "India";
+              console.log(`[Seeder] No opportunities found in Supabase for user ${userId}. Pre-seeding default...`);
+              const seeded = await seedDefaultRunForUser(userId, region as "India" | "Global", fullName);
+              opps = seeded.opportunities;
+            }
+
+            const config = configData ? mapDbConfig(configData) : null;
+            if (!config) return opps;
+
             const targetSectorsLower = config.targetSectors.map((s) => s.toLowerCase());
 
             return opps.filter((opp) => {
@@ -748,13 +803,25 @@ export const db = {
             });
           }
         } catch (e) {
-          console.error("[Supabase db.opportunities.findByUserId Error] Falling back:", e);
+          console.log("[Supabase db.opportunities.findByUserId] Falling back & activating offline mode:", e);
+          isUsingLocalFallback = true;
         }
       }
 
       const store = loadLocalDB();
-      const opps = store.opportunities[userId] || [];
+      let opps = store.opportunities[userId] || [];
       const config = store.configs[userId];
+      
+      if (opps.length === 0) {
+        // Pre-seed automatically in local store if empty to avoid blank slate
+        const user = store.users[userId];
+        const fullName = user ? user.fullName : "User";
+        const region = config ? config.activeRegion : "India";
+        console.log(`[Seeder] No local opportunities found for user ${userId}. Pre-seeding default...`);
+        const seeded = await seedDefaultRunForUser(userId, region as "India" | "Global", fullName);
+        opps = seeded.opportunities;
+      }
+
       if (!config) return opps;
 
       const targetSectorsLower = config.targetSectors.map((s) => s.toLowerCase());
